@@ -11,6 +11,7 @@
 #include <map>
 #include <string>
 #include <sstream>
+#include "time_evaluating.cpp"
 
 using namespace std;
 
@@ -49,13 +50,15 @@ void thread_integration(double x0, double x, double y0, double y, int m, double 
     *r += result;
 }
 
+template <class T>
+T get_param(string key, map<string, string> myMap) {
+    istringstream ss(myMap[key]);
+    T val;
+    ss >> val;
+    return val;
+}
 
-int main()
-{
-    string filename;
-    cout << "Please enter name of configuration file with extension '.txt':>";
-    cin >> filename;
-//    filename = "config.txt";
+map<string, string> read_config(string filename) {
     string line;
     ifstream myfile;
     map<string, string> mp;
@@ -68,75 +71,103 @@ int main()
             int pos = line.find("=");
             string key = line.substr(0, pos);
             string value = line.substr(pos + 1);
-            mp.insert(make_pair(key, value));
+            mp[key] = value;
         }
 
         myfile.close();
     }
     else {
         cout << "Error with opening the file!" << endl;
-        return 0;
     }
+    return mp;
 
-    double abs_pr, rel_pr, x0, x1, y0, y1;
+};
+
+int main()
+{
+    string filename;
+    cout << "Please enter name of configuration file with extension '.txt':>";
+    cin >> filename;
+//    filename = "config.txt";
+    map<string, string> mp = read_config(filename);
+    double abs_er, rel_er, x0, x1, y0, y1;
     int m, num_of_threads;
-    istringstream s1(mp["absol_pr"]);
-        s1 >> abs_pr;
-    istringstream s2(mp["rel_pr"]);
-        s2 >> rel_pr;
-    istringstream s3(mp["x0"]);
-        s3 >> x0;
-    istringstream s4(mp["x1"]);
-        s4 >> x1;
-    istringstream s5(mp["y0"]);
-        s5 >> y0;
-    istringstream s6(mp["y1"]);
-        s6 >> y1;
-    istringstream s7(mp["m"]);
-        s7 >> m;
-    istringstream s8(mp["threads"]);
-        s8 >> num_of_threads;
+    if (mp.size() != 0) {
+        abs_er = get_param<double>("absol_er", mp);
+        rel_er = get_param<double>("rel_er", mp);
+        x0 = get_param<double>("x0", mp);
+        x1 = get_param<double>("x1", mp);
+        y0 = get_param<double>("y0", mp);
+        y1 = get_param<double>("y1", mp);
+        m = get_param<int>("m", mp);
+        num_of_threads = get_param<int>("threads", mp);
 
-    clock_t t1, t2;
-    t1 = clock();
-    thread threads[num_of_threads];
-    double pr = 1E-3;
+        thread threads[num_of_threads];
+        double pr = 1E-3;
 
-    double integral = 0;
-    double interval_x = (x1 - x0) / num_of_threads;
-    double x = x0;
-    cout << "  Calculating..." << endl;
+        double integral = 0;
+        double interval_x = (x1 - x0) / num_of_threads;
+        double x = x0;
+        cout << "  Calculating...\n" << endl;
+        double step1 = 1E-3;
+        double step2 = step1 / 2.0;
+        double integral1 = 0, integral2 = 0;
+        double j = x, l = x;
 
-    for (int i = 0; i < num_of_threads; ++i)
-    {
-        threads[i] = thread(thread_integration, x, x + interval_x, y0, y1, m, pr, &integral);
-        x += interval_x;
+        while (j < x1) {
+            integral1 += integration(j, j + step1, y0, y1, m, pr);
+            j += step1;
+        }
+
+        while (l < x1) {
+            integral2 += integration(l, l + step2, y0, y1, m, pr);
+            l += step2;
+        }
+
+        double abs_dif = abs(integral1 - integral2);
+        double rel_dif = abs((integral1 - integral2) / max(integral1, integral2));
+
+        if (abs_dif <= abs_er)
+            cout << "| Absolute error is okay\t";
+        else
+            cout << "| Absolute error is not okay\t";
+
+        cout << abs_dif << " vs " << abs_er << endl;
+
+        if (rel_dif <= rel_er)
+            cout << "| Relative error is okay\t";
+        else
+            cout << "| Relative error is not okay\t";
+        cout << rel_dif << " vs " << rel_er << endl;
+
+        auto t1 = get_current_time_fenced();
+        for (int i = 0; i < num_of_threads; ++i) {
+            threads[i] = thread(thread_integration, x, x + interval_x, y0, y1, m, pr, &integral);
+            x += interval_x;
+        }
+
+        for (int j = 0; j < num_of_threads; ++j) {
+            threads[j].join();
+        }
+
+        auto t2 = get_current_time_fenced();
+        auto dif_time = t2 - t1;
+        chrono::duration<double, milli> the_time = dif_time;
+        cout << " -------------------------------------\n| Time: " << the_time.count()
+             << " ms\n -------------------------------------" << endl;
+
+        double integ = integration(x0, x1, y0, y1, m, pr);
+        ofstream result;
+        result.open("result.txt");
+            result << "| Threads result: " << integral << "\n|-----------------------------" << endl;
+            result << "| Function result: " << integ << "\n|-----------------------------" << endl;
+            result << "| Absolute error: " << abs_dif << endl;
+            result << "| Relative error: " << rel_dif << "\n|-----------------------------" << endl;
+            result << "| Time: " << the_time.count() << " ms\n -----------------------------" << endl;
+
+        cout << "\t|  THREADS result: " << integral << endl;
+        cout << "\t|-----------------------------\n";
+        cout << "\t| FUNCTION result: " << integ << "\n\t -----------------------------" << endl;
     }
-
-    for (int j = 0; j < num_of_threads; ++j)
-    {
-        threads[j].join();
-    }
-
-    t2 = clock();
-    float the_time = float((t2 - t1))/(CLOCKS_PER_SEC / 1000);
-    cout << " -------------------------------------\n| Time: " <<  the_time << " ms\n -------------------------------------" << endl;
-
-    double integ = integration(x0, x1, y0, y1, m, pr);
-    double absolute = abs(integral - integ);
-    double relative = abs(absolute / integ);
-
-    ofstream result;
-    result.open("result.txt");
-        result << "| Threads result: " << integral << "\n|-----------------------------" << endl;
-        result << "| Function result: " << integ << "\n|-----------------------------" << endl;
-        result << "| Absolute: " << absolute << endl;
-        result << "| Relative: " << relative << "\n|-----------------------------" << endl;
-        result << "| Time: " << the_time << " ms\n -----------------------------" << endl;
-
-    cout << "\t|  THREADS result: " << integral << endl;
-    cout << "\t|-----------------------------\n";
-    cout << "\t| FUNCTION result: " << integ << "\n\t -----------------------------" << endl;
-
     return 0;
 }

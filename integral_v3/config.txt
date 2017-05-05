@@ -1,5 +1,5 @@
-absol_pr=0.02
-rel_pr=0.001
+absol_er=1E-3
+rel_er=1E-3
 threads=30
 x0=0
 x1=3
